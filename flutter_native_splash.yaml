@@ -1,0 +1,8 @@
+flutter_native_splash:
+  color: "#000000"
+  image: assets/images/go_ride_logo.png
+  android_12:
+    image: assets/images/go_ride_logo.png
+    icon_background_color: "#000000"
+  ios: true
+  android: true
