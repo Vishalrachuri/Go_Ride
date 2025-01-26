@@ -12,7 +12,7 @@ void main() async {
     options: DefaultFirebaseOptions.currentPlatform,
   );
 
-  // RemoveS this line as it clears credentials on every app start
+  // Remove SS this line as it clears credentials on every app start
   // final prefs = await SharedPreferences.getInstance();
   // await prefs.clear();
 
