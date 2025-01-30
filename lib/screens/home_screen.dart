@@ -1,4 +1,7 @@
+
+import 'dart:async';
 import 'dart:convert';
+import 'dart:math';
 import 'package:flutter/material.dart';
 import 'package:google_maps_flutter/google_maps_flutter.dart';
 import 'package:geolocator/geolocator.dart';
@@ -6,6 +9,8 @@ import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:logger/logger.dart';
 import '../utils/constants.dart';
+import '../models/place_details.dart';
+import '../widgets/location_input_field.dart';
 import 'auth_screen.dart';
 import 'scheduled_rides_screen.dart';
 import 'chat_screen.dart';
@@ -21,6 +26,7 @@ class HomeScreen extends StatefulWidget {
 class HomeScreenState extends State<HomeScreen> {
   // Logger instance
   final _logger = Logger();
+  final String _apiKey = 'AIzaSyBh5QRHCUySeig7queszJvrcuEoF2C6VKs';
 
   // State variables
   int _selectedIndex = 0;
@@ -28,11 +34,18 @@ class HomeScreenState extends State<HomeScreen> {
   Position? _currentPosition;
   bool _isLoading = true;
   bool _isLoadingRides = false;
+  bool _isLocationInitialized = false;
   Set<Marker> _markers = {};
   bool isCarMode = true;
   String? _accessToken;
   Map<String, dynamic>? _userData;
   List<dynamic> _rides = [];
+  PlaceDetails? _pickupPlaceDetails;
+  PlaceDetails? _destinationPlaceDetails;
+  bool _isFollowingUser = true;
+
+  // Location streaming
+  StreamSubscription<Position>? _positionStream;
 
   // Controllers
   final _pickupController = TextEditingController();
@@ -40,18 +53,17 @@ class HomeScreenState extends State<HomeScreen> {
   DateTime? _selectedDate;
   TimeOfDay? _selectedTime;
   int _seatsAvailable = 1;
-
-  // ScrollController for DraggableScrollableSheet
   final ScrollController _scrollController = ScrollController();
 
   @override
   void initState() {
     super.initState();
-    _initializeApp();
+    _requestLocationPermission();
   }
 
   @override
   void dispose() {
+    _positionStream?.cancel();
     mapController?.dispose();
     _pickupController.dispose();
     _destinationController.dispose();
@@ -59,7 +71,36 @@ class HomeScreenState extends State<HomeScreen> {
     super.dispose();
   }
 
-  // Initialization Methods
+  Future<void> _requestLocationPermission() async {
+    try {
+      bool serviceEnabled = await Geolocator.isLocationServiceEnabled();
+      if (!serviceEnabled) {
+        _showError('Location services are disabled. Please enable location services.');
+        return;
+      }
+
+      LocationPermission permission = await Geolocator.checkPermission();
+      if (permission == LocationPermission.denied) {
+        permission = await Geolocator.requestPermission();
+        if (permission == LocationPermission.denied) {
+          _showError('Location permissions are required for this app.');
+          return;
+        }
+      }
+
+      if (permission == LocationPermission.deniedForever) {
+        _showError('Location permissions are permanently denied. Please enable them in settings.');
+        return;
+      }
+
+      await _initializeApp();
+      _startLocationStream();
+    } catch (e) {
+      _logger.e('Error requesting location permission: $e');
+      _showError('Error accessing location services');
+    }
+  }
+
   Future<void> _initializeApp() async {
     try {
       await _checkAuth();
@@ -73,18 +114,82 @@ class HomeScreenState extends State<HomeScreen> {
     }
   }
 
+  void _startLocationStream() {
+    const locationSettings = LocationSettings(
+      accuracy: LocationAccuracy.high,
+      distanceFilter: 10, // Update every 10 meters
+      timeLimit: Duration(seconds: 5),
+    );
+
+    _positionStream = Geolocator.getPositionStream(locationSettings: locationSettings)
+        .listen(
+          (Position position) {
+        if (mounted) {
+          setState(() {
+            _currentPosition = position;
+          });
+
+          // Update camera position if following user
+          if (mapController != null && _isFollowingUser) {
+            mapController!.animateCamera(
+              CameraUpdate.newLatLng(
+                LatLng(position.latitude, position.longitude),
+              ),
+            );
+          }
+        }
+      },
+      onError: (error) {
+        _logger.e('Location stream error: $error');
+        _showError('Error updating location');
+      },
+    );
+  }
+
+
+  Future<void> _getCurrentLocation() async {
+    try {
+      setState(() => _isLoading = true);
+
+      final position = await Geolocator.getCurrentPosition(
+        desiredAccuracy: LocationAccuracy.high,
+        timeLimit: const Duration(seconds: 5),
+      );
+
+      if (!mounted) return;
+
+      setState(() {
+        _currentPosition = position;
+        _isLocationInitialized = true;
+      });
+
+      if (mapController != null) {
+        await mapController!.animateCamera(
+          CameraUpdate.newCameraPosition(
+            CameraPosition(
+              target: LatLng(position.latitude, position.longitude),
+              zoom: 15,
+            ),
+          ),
+        );
+      }
+    } catch (e) {
+      _logger.e('Error getting location: $e');
+      _showError('Could not get current location. Please check your location settings.');
+    } finally {
+      if (mounted) {
+        setState(() => _isLoading = false);
+      }
+    }
+  }
+
   Future<void> _checkAuth() async {
     try {
-      print('Loading user data...');
       final prefs = await SharedPreferences.getInstance();
       _accessToken = prefs.getString('access_token');
       final userDataString = prefs.getString('user_data');
 
-      print('Token found: ${_accessToken != null}');
-      print('User data found: ${userDataString != null}');
-
       if (_accessToken == null || userDataString == null) {
-        print('Missing auth data');
         if (mounted) {
           _showError('Please login again');
           _redirectToLogin();
@@ -94,25 +199,20 @@ class HomeScreenState extends State<HomeScreen> {
 
       try {
         final userData = json.decode(userDataString);
-        print('User data parsed: $userData');
-
         if (mounted) {
           setState(() {
             _userData = userData;
             isCarMode = userData['user_type'] == 'driver';
             _isLoading = false;
           });
-          print('State updated with user data');
         }
       } catch (e) {
-        print('Error parsing user data: $e');
         if (mounted) {
           _showError('Error loading user data');
           _redirectToLogin();
         }
       }
     } catch (e) {
-      print('Auth check error: $e');
       if (mounted) {
         _showError('Authentication error');
         _redirectToLogin();
@@ -120,64 +220,156 @@ class HomeScreenState extends State<HomeScreen> {
     }
   }
 
+  void _updateMapMarkers() {
+    if (!mounted) return;
 
-  // Location Methods
-  Future<void> _getCurrentLocation() async {
-    try {
-      bool serviceEnabled = await Geolocator.isLocationServiceEnabled();
-      if (!serviceEnabled) {
-        throw Exception('Location services are disabled');
-      }
+    Set<Marker> newMarkers = {};
 
-      LocationPermission permission = await Geolocator.checkPermission();
-      if (permission == LocationPermission.denied) {
-        permission = await Geolocator.requestPermission();
-        if (permission == LocationPermission.denied) {
-          throw Exception('Location permissions are denied');
-        }
-      }
-
-      if (permission == LocationPermission.deniedForever) {
-        throw Exception('Location permissions are permanently denied');
-      }
-
-      final position = await Geolocator.getCurrentPosition(
-        desiredAccuracy: LocationAccuracy.high,
+    // Only add pickup location marker
+    if (_pickupPlaceDetails != null) {
+      newMarkers.add(
+        Marker(
+          markerId: const MarkerId('pickup'),
+          position: LatLng(_pickupPlaceDetails!.lat, _pickupPlaceDetails!.lng),
+          infoWindow: const InfoWindow(title: 'Pickup Location'),
+          icon: BitmapDescriptor.defaultMarkerWithHue(BitmapDescriptor.hueGreen),
+        ),
       );
-
-      if (mounted) {
-        setState(() {
-          _currentPosition = position;
-          _markers = {
-            Marker(
-              markerId: const MarkerId('currentLocation'),
-              position: LatLng(position.latitude, position.longitude),
-              infoWindow: const InfoWindow(title: 'Your Location'),
-            ),
-          };
-        });
-
-        if (mapController != null) {
-          await mapController!.animateCamera(
-            CameraUpdate.newCameraPosition(
-              CameraPosition(
-                target: LatLng(position.latitude, position.longitude),
-                zoom: 15,
-              ),
-            ),
-          );
-        }
-      }
-    } catch (e) {
-      _logger.e('Error getting location: $e');
-      _showError('Could not get current location');
-    } finally {
-      if (mounted) {
-        setState(() => _isLoading = false);
-      }
     }
+
+    // Only add destination marker
+    if (_destinationPlaceDetails != null) {
+      newMarkers.add(
+        Marker(
+          markerId: const MarkerId('destination'),
+          position: LatLng(_destinationPlaceDetails!.lat, _destinationPlaceDetails!.lng),
+          infoWindow: const InfoWindow(title: 'Destination'),
+          icon: BitmapDescriptor.defaultMarkerWithHue(BitmapDescriptor.hueRed),
+        ),
+      );
+    }
+
+    setState(() => _markers = newMarkers);
+    _updateCameraPosition();
   }
-// Ride Methods
+
+  Future<void> _updateCameraPosition() async {
+    if (mapController == null || _markers.isEmpty) return;
+
+    List<LatLng> points = _markers.map((m) => m.position).toList();
+
+    double minLat = points.map((p) => p.latitude).reduce(min);
+    double maxLat = points.map((p) => p.latitude).reduce(max);
+    double minLng = points.map((p) => p.longitude).reduce(min);
+    double maxLng = points.map((p) => p.longitude).reduce(max);
+
+    final bounds = LatLngBounds(
+      southwest: LatLng(minLat - 0.01, minLng - 0.01),
+      northeast: LatLng(maxLat + 0.01, maxLng + 0.01),
+    );
+
+    await mapController!.animateCamera(
+      CameraUpdate.newLatLngBounds(bounds, 50),
+    );
+  }
+
+  Widget _buildHomeTab() {
+    if (_isLoading) {
+      return const Center(child: CircularProgressIndicator());
+    }
+
+    return Stack(
+      children: [
+        GoogleMap(
+          onMapCreated: (GoogleMapController controller) async {
+            setState(() => mapController = controller);
+            if (_currentPosition != null) {
+              await controller.animateCamera(
+                CameraUpdate.newCameraPosition(
+                  CameraPosition(
+                    target: LatLng(_currentPosition!.latitude, _currentPosition!.longitude),
+                    zoom: 15,
+                  ),
+                ),
+              );
+            }
+          },
+          initialCameraPosition: CameraPosition(
+            target: _currentPosition != null
+                ? LatLng(_currentPosition!.latitude, _currentPosition!.longitude)
+                : const LatLng(0, 0),
+            zoom: _currentPosition != null ? 15 : 2,
+          ),
+          myLocationButtonEnabled: false, // Disable default button
+          myLocationEnabled: true,
+          markers: _markers,
+          zoomControlsEnabled: true,
+          mapType: MapType.normal,
+          compassEnabled: true,
+          onCameraMove: (_) {
+            setState(() => _isFollowingUser = false);
+          },
+        ),
+        // Location control buttons
+    /*
+        Positioned(
+          right: 16,
+          bottom: 200,
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              FloatingActionButton(
+                heroTag: 'toggleFollow',
+                onPressed: () {
+                  setState(() => _isFollowingUser = !_isFollowingUser);
+                  if (_isFollowingUser && _currentPosition != null) {
+                    mapController?.animateCamera(
+                      CameraUpdate.newLatLng(
+                        LatLng(_currentPosition!.latitude, _currentPosition!.longitude),
+                      ),
+                    );
+                  }
+                },
+                child: Icon(_isFollowingUser ? Icons.gps_fixed : Icons.gps_not_fixed),
+              ),
+              const SizedBox(height: 8),
+              FloatingActionButton(
+                heroTag: 'refreshLocation',
+                onPressed: _getCurrentLocation,
+                child: const Icon(Icons.my_location),
+              ),
+            ],
+          ),
+        ),
+        */
+        DraggableScrollableSheet(
+          initialChildSize: 0.3,
+          minChildSize: 0.2,
+          maxChildSize: 0.9,
+          builder: (context, scrollController) {
+            return Container(
+              decoration: BoxDecoration(
+                color: Theme.of(context).scaffoldBackgroundColor,
+                borderRadius: const BorderRadius.vertical(top: Radius.circular(16)),
+                boxShadow: [
+                  BoxShadow(
+                    color: Colors.black.withOpacity(0.1),
+                    blurRadius: 8,
+                    offset: const Offset(0, -2),
+                  ),
+                ],
+              ),
+              child: SingleChildScrollView(
+                controller: scrollController,
+                child: _buildLocationCard(),
+              ),
+            );
+          },
+        ),
+      ],
+    );
+  }
+
   Future<void> _loadRides() async {
     if (_isLoadingRides) return;
 
@@ -185,13 +377,9 @@ class HomeScreenState extends State<HomeScreen> {
       setState(() => _isLoadingRides = true);
 
       if (_accessToken == null) {
-        print('No access token found');
         _redirectToLogin();
         return;
       }
-
-      print('Making request to: $baseUrl/rides');
-      print('Using token: $_accessToken');
 
       final response = await http.get(
         Uri.parse('$baseUrl/rides'),
@@ -201,39 +389,19 @@ class HomeScreenState extends State<HomeScreen> {
         },
       );
 
-      print('Response status code: ${response.statusCode}');
-      print('Response body: ${response.body}');
-
       if (response.statusCode == 200) {
         final data = json.decode(response.body);
         if (mounted) {
-          setState(() {
-            _rides = data['rides'] ?? [];
-            print('Loaded ${_rides.length} rides');
-          });
-        }
-      } else if (response.statusCode == 404) {
-        // No rides found - that's okay
-        if (mounted) {
-          setState(() {
-            _rides = [];
-            print('No rides found');
-          });
+          setState(() => _rides = data['rides'] ?? []);
         }
       } else if (response.statusCode == 401) {
-        print('Unauthorized - redirecting to login');
         _redirectToLogin();
       } else {
-        print('Error response: ${response.statusCode} - ${response.body}');
-        throw Exception('Failed to load rides: ${response.statusCode}');
+        throw Exception('Failed to load rides');
       }
     } catch (e) {
-      print('Error in _loadRides: $e');
       _logger.e('Error loading rides: $e');
-      // Only show error if it's not a "no rides found" situation
-      if (!e.toString().contains('404')) {
-        _showError('Failed to load rides: ${e.toString()}');
-      }
+      _showError('Failed to load rides');
     } finally {
       if (mounted) {
         setState(() => _isLoadingRides = false);
@@ -241,103 +409,8 @@ class HomeScreenState extends State<HomeScreen> {
     }
   }
 
-  Future<void> _createRide() async {
-    if (_pickupController.text.isEmpty ||
-        _destinationController.text.isEmpty ||
-        _selectedDate == null ||
-        _selectedTime == null) {
-      _showError('Please fill in all fields');
-      return;
-    }
-
-    try {
-      setState(() => _isLoading = true);
-
-      final DateTime scheduledDateTime = DateTime(
-        _selectedDate!.year,
-        _selectedDate!.month,
-        _selectedDate!.day,
-        _selectedTime!.hour,
-        _selectedTime!.minute,
-      );
-
-      final response = await http.post(
-        Uri.parse('$baseUrl/rides'),
-        headers: {
-          'Authorization': 'Bearer $_accessToken',
-          'Content-Type': 'application/json',
-        },
-        body: jsonEncode({
-          'pickup_location': _pickupController.text,
-          'pickup_latitude': _currentPosition?.latitude ?? 0,
-          'pickup_longitude': _currentPosition?.longitude ?? 0,
-          'destination': _destinationController.text,
-          'destination_latitude': 0,
-          'destination_longitude': 0,
-          'scheduled_time': scheduledDateTime.toIso8601String(),
-          'seats_available': _seatsAvailable,
-        }),
-      );
-
-      if (response.statusCode == 200) {
-        _showMessage(
-          isCarMode ? 'Ride offered successfully' : 'Ride requested successfully',
-        );
-        _clearForm();
-        _loadRides();
-      } else if (response.statusCode == 401) {
-        _redirectToLogin();
-      } else {
-        throw Exception('Failed to create ride');
-      }
-    } catch (e) {
-      _logger.e('Error creating ride: $e');
-      _showError('Failed to create ride');
-    } finally {
-      if (mounted) {
-        setState(() => _isLoading = false);
-      }
-    }
-  }
-
-  // UI Helper Methods
-  void _clearForm() {
-    setState(() {
-      _pickupController.clear();
-      _destinationController.clear();
-      _selectedDate = null;
-      _selectedTime = null;
-      _seatsAvailable = 1;
-    });
-  }
-
-  Future<void> _selectDate(BuildContext context) async {
-    final DateTime? picked = await showDatePicker(
-      context: context,
-      initialDate: DateTime.now(),
-      firstDate: DateTime.now(),
-      lastDate: DateTime.now().add(const Duration(days: 30)),
-    );
-
-    if (picked != null && mounted) {
-      setState(() => _selectedDate = picked);
-    }
-  }
-
-  Future<void> _selectTime(BuildContext context) async {
-    final TimeOfDay? picked = await showTimePicker(
-      context: context,
-      initialTime: TimeOfDay.now(),
-    );
-
-    if (picked != null && mounted) {
-      setState(() => _selectedTime = picked);
-    }
-  }
-
   void _redirectToLogin() {
     if (!mounted) return;
-    print('Redirecting to login screen');
     Navigator.of(context).pushAndRemoveUntil(
       MaterialPageRoute(builder: (context) => const AuthScreen()),
           (route) => false,
@@ -345,7 +418,15 @@ class HomeScreenState extends State<HomeScreen> {
   }
 
   void _showError(String message) {
-    _showMessage(message, isError: true);
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(message),
+        backgroundColor: Colors.red,
+        behavior: SnackBarBehavior.floating,
+        duration: const Duration(seconds: 3),
+      ),
+    );
   }
 
   void _showMessage(String message, {bool isError = false}) {
@@ -359,14 +440,25 @@ class HomeScreenState extends State<HomeScreen> {
       ),
     );
   }
-  // UI Building Methods
+
+  void _clearForm() {
+    setState(() {
+      _pickupController.clear();
+      _destinationController.clear();
+      _selectedDate = null;
+      _selectedTime = null;
+      _seatsAvailable = 1;
+      _pickupPlaceDetails = null;
+      _destinationPlaceDetails = null;
+      _updateMapMarkers();
+    });
+  }
+
   Widget _buildLocationCard() {
     return Card(
       margin: const EdgeInsets.all(16),
       elevation: 4,
-      shape: RoundedRectangleBorder(
-        borderRadius: BorderRadius.circular(16),
-      ),
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
       child: Padding(
         padding: const EdgeInsets.all(16),
         child: Column(
@@ -378,7 +470,8 @@ class HomeScreenState extends State<HomeScreen> {
                 Expanded(
                   child: ElevatedButton(
                     style: ElevatedButton.styleFrom(
-                      backgroundColor: isCarMode ? Colors.deepPurple : Colors.grey,
+                      backgroundColor: isCarMode ? Colors.deepPurple : Colors
+                          .grey,
                       padding: const EdgeInsets.symmetric(vertical: 12),
                       shape: RoundedRectangleBorder(
                         borderRadius: BorderRadius.circular(8),
@@ -392,7 +485,8 @@ class HomeScreenState extends State<HomeScreen> {
                 Expanded(
                   child: ElevatedButton(
                     style: ElevatedButton.styleFrom(
-                      backgroundColor: !isCarMode ? Colors.deepPurple : Colors.grey,
+                      backgroundColor: !isCarMode ? Colors.deepPurple : Colors
+                          .grey,
                       padding: const EdgeInsets.symmetric(vertical: 12),
                       shape: RoundedRectangleBorder(
                         borderRadius: BorderRadius.circular(8),
@@ -406,103 +500,118 @@ class HomeScreenState extends State<HomeScreen> {
             ),
             const SizedBox(height: 16),
 
-            // Location Fields
-            TextField(
+            // Location Input Fields
+            LocationInputField(
               controller: _pickupController,
-              decoration: InputDecoration(
-                labelText: 'Pickup Location',
-                prefixIcon: const Icon(Icons.location_on),
-                border: OutlineInputBorder(
-                  borderRadius: BorderRadius.circular(8),
-                ),
-              ),
+              label: 'Pickup Location',
+              apiKey: _apiKey,
+              currentPosition: _currentPosition,
+              onLocationSelected: (details) {
+                setState(() {
+                  _pickupPlaceDetails = details;
+                  _updateMapMarkers();
+                });
+              },
             ),
             const SizedBox(height: 12),
-            TextField(
+            LocationInputField(
               controller: _destinationController,
-              decoration: InputDecoration(
-                labelText: 'Destination',
-                prefixIcon: const Icon(Icons.location_on),
-                border: OutlineInputBorder(
-                  borderRadius: BorderRadius.circular(8),
-                ),
-              ),
+              label: 'Destination',
+              apiKey: _apiKey,
+              currentPosition: _currentPosition,
+              onLocationSelected: (details) {
+                setState(() {
+                  _destinationPlaceDetails = details;
+                  _updateMapMarkers();
+                });
+              },
             ),
             const SizedBox(height: 16),
 
-            // Date & Time Row
+            // Date & Time Selection
             Row(
               children: [
                 Expanded(
                   child: OutlinedButton.icon(
-                    onPressed: () => _selectDate(context),
+                    onPressed: () async {
+                      final DateTime? picked = await showDatePicker(
+                        context: context,
+                        initialDate: DateTime.now(),
+                        firstDate: DateTime.now(),
+                        lastDate: DateTime.now().add(const Duration(days: 30)),
+                      );
+                      if (picked != null && mounted) {
+                        setState(() => _selectedDate = picked);
+                      }
+                    },
                     icon: const Icon(Icons.calendar_today),
                     label: Text(
                       _selectedDate == null
                           ? 'Select Date'
-                          : '${_selectedDate!.day}/${_selectedDate!.month}/${_selectedDate!.year}',
-                    ),
-                    style: OutlinedButton.styleFrom(
-                      padding: const EdgeInsets.symmetric(vertical: 12),
+                          : '${_selectedDate!.day}/${_selectedDate!
+                          .month}/${_selectedDate!.year}',
                     ),
                   ),
                 ),
                 const SizedBox(width: 8),
                 Expanded(
                   child: OutlinedButton.icon(
-                    onPressed: () => _selectTime(context),
+                    onPressed: () async {
+                      final TimeOfDay? picked = await showTimePicker(
+                        context: context,
+                        initialTime: TimeOfDay.now(),
+                      );
+                      if (picked != null && mounted) {
+                        setState(() => _selectedTime = picked);
+                      }
+                    },
                     icon: const Icon(Icons.access_time),
                     label: Text(
-                      _selectedTime == null
-                          ? 'Select Time'
-                          : _selectedTime!.format(context),
-                    ),
-                    style: OutlinedButton.styleFrom(
-                      padding: const EdgeInsets.symmetric(vertical: 12),
+                      _selectedTime == null ? 'Select Time' : _selectedTime!
+                          .format(context),
                     ),
                   ),
                 ),
               ],
             ),
-            const SizedBox(height: 16),
 
-            // Seats Row (only for drivers)
+            // Seats Selection (Driver mode only)
             if (isCarMode) ...[
+              const SizedBox(height: 16),
               Row(
                 children: [
                   const Text(
                     'Available Seats: ',
-                    style: TextStyle(
-                      fontSize: 16,
-                      fontWeight: FontWeight.w500,
-                    ),
+                    style: TextStyle(fontSize: 16, fontWeight: FontWeight.w500),
                   ),
                   const Spacer(),
                   IconButton(
                     icon: const Icon(Icons.remove),
-                    onPressed: () => setState(() {
-                      if (_seatsAvailable > 1) _seatsAvailable--;
-                    }),
+                    onPressed: () {
+                      if (_seatsAvailable > 1) {
+                        setState(() => _seatsAvailable--);
+                      }
+                    },
                   ),
                   Text(
                     '$_seatsAvailable',
                     style: const TextStyle(
-                      fontSize: 16,
-                      fontWeight: FontWeight.bold,
-                    ),
+                        fontSize: 16, fontWeight: FontWeight.bold),
                   ),
                   IconButton(
                     icon: const Icon(Icons.add),
-                    onPressed: () => setState(() {
-                      if (_seatsAvailable < 6) _seatsAvailable++;
-                    }),
+                    onPressed: () {
+                      if (_seatsAvailable < 6) {
+                        setState(() => _seatsAvailable++);
+                      }
+                    },
                   ),
                 ],
               ),
-              const SizedBox(height: 16),
             ],
 
-            // Submit Button
+            const SizedBox(height: 16),
+            // Create Ride Button
             SizedBox(
               width: double.infinity,
               child: ElevatedButton(
@@ -537,83 +646,68 @@ class HomeScreenState extends State<HomeScreen> {
       ),
     );
   }
-  Widget _buildHomeTab() {
-    if (_isLoading) {
-      return const Center(child: CircularProgressIndicator());
+
+  Future<void> _createRide() async {
+    if (_pickupPlaceDetails == null ||
+        _destinationPlaceDetails == null ||
+        _selectedDate == null ||
+        _selectedTime == null) {
+      _showError('Please fill in all fields');
+      return;
     }
 
-    return Stack(
-      children: [
-        GoogleMap(
-          onMapCreated: (GoogleMapController controller) async {
-            try {
-              setState(() {
-                mapController = controller;
-              });
-              if (_currentPosition != null) {
-                await controller.animateCamera(
-                  CameraUpdate.newCameraPosition(
-                    CameraPosition(
-                      target: LatLng(
-                        _currentPosition!.latitude,
-                        _currentPosition!.longitude,
-                      ),
-                      zoom: 15,
-                    ),
-                  ),
-                );
-              }
-            } catch (e) {
-              _logger.e('Error initializing map: $e');
-              _showError('Error loading map');
-            }
-          },
-          initialCameraPosition: CameraPosition(
-            target: _currentPosition != null
-                ? LatLng(
-              _currentPosition!.latitude,
-              _currentPosition!.longitude,
-            )
-                : const LatLng(37.42796133580664, -122.085749655962),
-            zoom: 15,
-          ),
-          myLocationButtonEnabled: true,
-          myLocationEnabled: true,
-          zoomControlsEnabled: true,
-          zoomGesturesEnabled: true,
-          markers: _markers,
-        ),
-        DraggableScrollableSheet(
-          initialChildSize: 0.3,
-          minChildSize: 0.2,
-          maxChildSize: 0.9,
-          snap: true,
-          snapSizes: const [0.3, 0.9],
-          builder: (context, scrollController) {
-            return Container(
-              decoration: BoxDecoration(
-                color: Theme.of(context).scaffoldBackgroundColor,
-                borderRadius: const BorderRadius.vertical(
-                  top: Radius.circular(16),
-                ),
-                boxShadow: [
-                  BoxShadow(
-                    color: Colors.black.withOpacity(0.1),
-                    blurRadius: 8,
-                    offset: const Offset(0, -2),
-                  ),
-                ],
-              ),
-              child: SingleChildScrollView(
-                controller: scrollController,
-                child: _buildLocationCard(),
-              ),
-            );
-          },
-        ),
-      ],
-    );
+    try {
+      setState(() => _isLoading = true);
+
+      final DateTime scheduledDateTime = DateTime(
+        _selectedDate!.year,
+        _selectedDate!.month,
+        _selectedDate!.day,
+        _selectedTime!.hour,
+        _selectedTime!.minute,
+      );
+
+      final response = await http.post(
+        Uri.parse('$baseUrl/rides'),
+        headers: {
+          'Authorization': 'Bearer $_accessToken',
+          'Content-Type': 'application/json',
+        },
+        body: jsonEncode({
+          'pickup_location': _pickupPlaceDetails!.name,
+          'pickup_latitude': _pickupPlaceDetails!.lat,
+          'pickup_longitude': _pickupPlaceDetails!.lng,
+          'destination': _destinationPlaceDetails!.name,
+          'destination_latitude': _destinationPlaceDetails!.lat,
+          'destination_longitude': _destinationPlaceDetails!.lng,
+          'scheduled_time': scheduledDateTime.toIso8601String(),
+          'seats_available': _seatsAvailable,
+        }),
+      );
+
+      if (response.statusCode == 200) {
+        _showMessage(
+          isCarMode
+              ? 'Ride offered successfully'
+              : 'Ride requested successfully',
+        );
+        _clearForm();
+        await _loadRides();
+      } else if (response.statusCode == 401) {
+        _redirectToLogin();
+      } else {
+        throw Exception('Failed to create ride');
+      }
+    } catch (e) {
+      _logger.e('Error creating ride: $e');
+      _showError('Failed to create ride');
+    } finally {
+      if (mounted) {
+        setState(() => _isLoading = false);
+      }
+    }
   }
+
 
   @override
   Widget build(BuildContext context) {
@@ -633,26 +727,12 @@ class HomeScreenState extends State<HomeScreen> {
         selectedItemColor: Theme.of(context).primaryColor,
         unselectedItemColor: Colors.grey,
         showUnselectedLabels: true,
-        onTap: (index) {
-          setState(() => _selectedIndex = index);
-        },
+        onTap: (index) => setState(() => _selectedIndex = index),
         items: const [
-          BottomNavigationBarItem(
-            icon: Icon(Icons.home),
-            label: 'Home',
-          ),
-          BottomNavigationBarItem(
-            icon: Icon(Icons.schedule),
-            label: 'Scheduled',
-          ),
-          BottomNavigationBarItem(
-            icon: Icon(Icons.chat),
-            label: 'Chat',
-          ),
-          BottomNavigationBarItem(
-            icon: Icon(Icons.account_circle),
-            label: 'Account',
-          ),
+          BottomNavigationBarItem(icon: Icon(Icons.home), label: 'Home'),
+          BottomNavigationBarItem(icon: Icon(Icons.schedule), label: 'Scheduled'),
+          BottomNavigationBarItem(icon: Icon(Icons.chat), label: 'Chat'),
+          BottomNavigationBarItem(icon: Icon(Icons.account_circle), label: 'Account'),
         ],
       ),
     );

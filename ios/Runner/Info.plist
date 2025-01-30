@@ -2,34 +2,8 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
-    <!-- Location Permissions -->
-    <key>NSLocationWhenInUseUsageDescription</key>
-    <string>This app needs access to location when open to show your current location on the map.</string>
-    <key>NSLocationAlwaysUsageDescription</key>
-    <string>This app needs access to location when in the background to show your current location on the map.</string>
-
-    <!-- Google Maps -->
-    <key>GMSApiKey</key>
-    <string>AIzaSyBh5QRHCUySeig7queszJvrcuEoF2C6VKs</string>
-    <key>io.flutter.embedded_views_preview</key>
+    <key>CADisableMinimumFrameDurationOnPhone</key>
     <true/>
-
-    <!-- Google Sign In -->
-    <key>CFBundleURLTypes</key>
-    <array>
-        <dict>
-            <key>CFBundleTypeRole</key>
-            <string>Editor</string>
-            <key>CFBundleURLName</key>
-            <string>com.googleusercontent.apps.702698165636-bblf47v6qu1u7pimchlq00vgfj22ivuk</string>
-            <key>CFBundleURLSchemes</key>
-            <array>
-                <string>com.googleusercontent.apps.702698165636-bblf47v6qu1u7pimchlq00vgfj22ivuk</string>
-            </array>
-        </dict>
-    </array>
-
-    <!-- Basic App Configuration -->
     <key>CFBundleDevelopmentRegion</key>
     <string>$(DEVELOPMENT_LANGUAGE)</string>
     <key>CFBundleDisplayName</key>
@@ -48,36 +22,68 @@
     <string>$(FLUTTER_BUILD_NAME)</string>
     <key>CFBundleSignature</key>
     <string>????</string>
+    <key>CFBundleURLTypes</key>
+    <array>
+       <dict>
+          <key>CFBundleTypeRole</key>
+          <string>Editor</string>
+          <key>CFBundleURLSchemes</key>
+          <array>
+             <string>com.googleusercontent.apps.702698165636-bblf47v6qu1u7pimchlq00vgfj22ivuk</string>
+          </array>
+       </dict>
+    </array>
     <key>CFBundleVersion</key>
     <string>$(FLUTTER_BUILD_NUMBER)</string>
-
-    <!-- iOS Configuration -->
+    <key>GMSApiKey</key>
+    <string>AIzaSyBh5QRHCUySeig7queszJvrcuEoF2C6VKs</string>
     <key>LSRequiresIPhoneOS</key>
     <true/>
+    <key>NSLocationAlwaysAndWhenInUseUsageDescription</key>
+    <string>This app needs location access to provide you with nearby rides, real-time tracking, and navigation services during your journey.</string>
+    <key>NSLocationAlwaysUsageDescription</key>
+    <string>Background location access is required for real-time ride tracking and navigation updates during your journey.</string>
+    <key>NSLocationWhenInUseUsageDescription</key>
+    <string>This app needs access to location when open to show your current location, find nearby rides, and provide accurate pickup/dropoff points.</string>
+    <key>NSLocationTemporaryUsageDescriptionDictionary</key>
+    <dict>
+        <key>PreciseLocation</key>
+        <string>We need precise location access to accurately match you with nearby rides and provide turn-by-turn navigation.</string>
+    </dict>
     <key>UIApplicationSupportsIndirectInputEvents</key>
     <true/>
+    <key>UIBackgroundModes</key>
+    <array>
+       <string>location</string>
+       <string>fetch</string>
+       <string>remote-notification</string>
+    </array>
     <key>UILaunchStoryboardName</key>
     <string>LaunchScreen</string>
     <key>UIMainStoryboardFile</key>
     <string>Main</string>
     <key>UIStatusBarHidden</key>
     <false/>
-    <key>CADisableMinimumFrameDurationOnPhone</key>
-    <true/>
-
-    <!-- Supported Orientations -->
     <key>UISupportedInterfaceOrientations</key>
     <array>
-        <string>UIInterfaceOrientationPortrait</string>
-        <string>UIInterfaceOrientationLandscapeLeft</string>
-        <string>UIInterfaceOrientationLandscapeRight</string>
+       <string>UIInterfaceOrientationPortrait</string>
+       <string>UIInterfaceOrientationLandscapeLeft</string>
+       <string>UIInterfaceOrientationLandscapeRight</string>
     </array>
     <key>UISupportedInterfaceOrientations~ipad</key>
     <array>
-        <string>UIInterfaceOrientationPortrait</string>
-        <string>UIInterfaceOrientationPortraitUpsideDown</string>
-        <string>UIInterfaceOrientationLandscapeLeft</string>
-        <string>UIInterfaceOrientationLandscapeRight</string>
+       <string>UIInterfaceOrientationPortrait</string>
+       <string>UIInterfaceOrientationPortraitUpsideDown</string>
+       <string>UIInterfaceOrientationLandscapeLeft</string>
+       <string>UIInterfaceOrientationLandscapeRight</string>
     </array>
+    <key>io.flutter.embedded_views_preview</key>
+    <true/>
+    <key>NSCameraUsageDescription</key>
+    <string>This app needs camera access to allow you to upload profile pictures and vehicle photos.</string>
+    <key>NSPhotoLibraryUsageDescription</key>
+    <string>This app needs photo library access to allow you to select and upload profile pictures and vehicle photos.</string>
+    <key>NSMicrophoneUsageDescription</key>
+    <string>This app needs microphone access for voice navigation instructions.</string>
 </dict>
 </plist>

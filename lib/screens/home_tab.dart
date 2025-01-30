@@ -11,7 +11,6 @@ class HomeTab extends StatefulWidget {
 
 class HomeTabState extends State<HomeTab> {
   GoogleMapController? _mapController;
-  LatLng _defaultPosition = const LatLng(17.385044, 78.486671); // Hyderabad
   LatLng? _currentPosition;
   bool _isLoading = true;
   Set<Marker> _markers = {};
@@ -19,30 +18,40 @@ class HomeTabState extends State<HomeTab> {
   @override
   void initState() {
     super.initState();
-    _getCurrentLocation();
+    _requestLocationPermission();
+  }
+
+  Future<void> _requestLocationPermission() async {
+    bool serviceEnabled = await Geolocator.isLocationServiceEnabled();
+    if (!serviceEnabled) {
+      _showError('Location services are disabled. Please enable them.');
+      return;
+    }
+
+    LocationPermission permission = await Geolocator.checkPermission();
+    if (permission == LocationPermission.denied) {
+      permission = await Geolocator.requestPermission();
+      if (permission == LocationPermission.denied) {
+        _showError('Location permissions are required for this app.');
+        return;
+      }
+    }
+
+    if (permission == LocationPermission.deniedForever) {
+      _showError('Location permissions are permanently denied. Enable them in settings.');
+      return;
+    }
+
+    await _getCurrentLocation();
   }
 
   Future<void> _getCurrentLocation() async {
     try {
-      bool serviceEnabled = await Geolocator.isLocationServiceEnabled();
-      if (!serviceEnabled) {
-        setState(() {
-          _isLoading = false;
-          _currentPosition = _defaultPosition;
-        });
-        return;
-      }
+      Position position = await Geolocator.getCurrentPosition(
+        desiredAccuracy: LocationAccuracy.high,
+        timeLimit: const Duration(seconds: 5),
+      );
 
-      LocationPermission permission = await Geolocator.requestPermission();
-      if (permission == LocationPermission.denied) {
-        setState(() {
-          _isLoading = false;
-          _currentPosition = _defaultPosition;
-        });
-        return;
-      }
-
-      Position position = await Geolocator.getCurrentPosition();
       if (mounted) {
         setState(() {
           _currentPosition = LatLng(position.latitude, position.longitude);
@@ -57,13 +66,19 @@ class HomeTabState extends State<HomeTab> {
         });
       }
     } catch (e) {
-      if (mounted) {
-        setState(() {
-          _isLoading = false;
-          _currentPosition = _defaultPosition;
-        });
-      }
+      _showError('Could not retrieve location. Using default.');
+      setState(() {
+        _currentPosition = const LatLng(32.7767, -96.7970); // Dallas, TX
+        _isLoading = false;
+      });
     }
+  }
+
+  void _showError(String message) {
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text(message), backgroundColor: Colors.red),
+    );
   }
 
   void _onMapCreated(GoogleMapController controller) {
@@ -77,7 +92,7 @@ class HomeTabState extends State<HomeTab> {
         GoogleMap(
           onMapCreated: _onMapCreated,
           initialCameraPosition: CameraPosition(
-            target: _currentPosition ?? _defaultPosition,
+            target: _currentPosition ?? const LatLng(32.7767, -96.7970),
             zoom: 14.0,
           ),
           myLocationEnabled: true,
@@ -87,9 +102,7 @@ class HomeTabState extends State<HomeTab> {
           compassEnabled: true,
         ),
         if (_isLoading)
-          const Center(
-            child: CircularProgressIndicator(),
-          ),
+          const Center(child: CircularProgressIndicator()),
       ],
     );
   }
