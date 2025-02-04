@@ -4,8 +4,10 @@ import 'package:firebase_auth/firebase_auth.dart';
 import 'package:google_sign_in/google_sign_in.dart';
 import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
-import '../utils/constants.dart';  // Make sure path is correct
-import 'home_screen.dart';  // Adjust the path as needed
+import '../widgets/custom_button.dart';
+import '../widgets/custom_text_field.dart';
+import '../utils/constants.dart';
+import 'home_screen.dart';
 
 class AuthScreen extends StatefulWidget {
   const AuthScreen({super.key});
@@ -17,7 +19,6 @@ class AuthScreen extends StatefulWidget {
 class _AuthScreenState extends State<AuthScreen> {
   bool isLogin = true;
   bool _isLoading = false;
-  bool _showForgotPassword = false;
   String _selectedUserType = 'rider';
 
   final _formKey = GlobalKey<FormState>();
@@ -50,19 +51,17 @@ class _AuthScreenState extends State<AuthScreen> {
         await _handleSignup();
       }
     } catch (e) {
-      print('Error during auth: $e');
+      debugPrint('Error during auth: $e');
       _showMessage("Something went wrong. Please try again.", isError: true);
     }
 
-    setState(() => _isLoading = false);
+    if (mounted) {
+      setState(() => _isLoading = false);
+    }
   }
 
   Future<void> _handleLogin() async {
     try {
-      setState(() => _isLoading = true);
-
-      print('Login attempt - Email: ${_emailController.text.trim()}');
-
       final response = await http.post(
         Uri.parse('$baseUrl/login'),
         headers: {'Content-Type': 'application/json'},
@@ -72,93 +71,30 @@ class _AuthScreenState extends State<AuthScreen> {
         }),
       );
 
-      print('Response status: ${response.statusCode}');
-      print('Response body: ${response.body}');
-
       if (response.statusCode == 200) {
         final responseData = json.decode(response.body);
-
-        // Save user data
-        final prefs = await SharedPreferences.getInstance();
-        await prefs.clear(); // Clear old data first
-
-        // Save token
-        final token = responseData['access_token'];
-        await prefs.setString('access_token', token);
-        print('Saved token: $token');
-
-        // Save user data
-        final userData = json.encode(responseData['user']);
-        await prefs.setString('user_data', userData);
-        print('Saved user data: $userData');
+        await _saveUserData(responseData);
 
         if (!mounted) return;
 
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('Login successful!'),
-            backgroundColor: Colors.green,
-          ),
-        );
+        _showMessage('Login successful!');
 
         // Navigate after brief delay
         await Future.delayed(const Duration(milliseconds: 500));
 
         if (!mounted) return;
 
-        // Navigate to home screen
-        await Navigator.of(context).pushAndRemoveUntil(
+        await Navigator.pushReplacement(
+          context,
           MaterialPageRoute(builder: (context) => const HomeScreen()),
-              (route) => false,
         );
       } else {
-        if (!mounted) return;
         final error = json.decode(response.body)['detail'] ?? 'Login failed';
-        _showMessage('Login failed: $error', isError: true);
+        _showMessage(error, isError: true);
       }
     } catch (e) {
-      print('Login error: $e');
-      if (mounted) {
-        _showMessage('Login failed: ${e.toString()}', isError: true);
-      }
-    } finally {
-      if (mounted) {
-        setState(() => _isLoading = false);
-      }
-    }
-  }
-
-  Future<void> _saveUserData(Map<String, dynamic> data) async {
-    try {
-      print('Starting to save user data...');
-      final prefs = await SharedPreferences.getInstance();
-
-      // Save access token
-      if (data['access_token'] != null) {
-        await prefs.setString('access_token', data['access_token']);
-        print('Access token saved successfully');
-      } else {
-        print('Warning: No access token in response data');
-      }
-
-      // Save user data
-      if (data['user'] != null) {
-        final userDataString = json.encode(data['user']);
-        await prefs.setString('user_data', userDataString);
-        print('User data saved successfully: $userDataString');
-      } else {
-        print('Warning: No user data in response data');
-      }
-
-      // Verify saved data
-      final savedToken = prefs.getString('access_token');
-      final savedUserData = prefs.getString('user_data');
-      print('Verification - Saved token: ${savedToken != null}');
-      print('Verification - Saved user data: ${savedUserData != null}');
-
-    } catch (e) {
-      print('Error saving user data: $e');
-      throw Exception('Failed to save user data: $e');
+      debugPrint('Login error: $e');
+      _showMessage('Login failed. Please check your connection.', isError: true);
     }
   }
 
@@ -187,13 +123,13 @@ class _AuthScreenState extends State<AuthScreen> {
       final responseData = json.decode(response.body);
       if (response.statusCode == 200) {
         await _saveUserData(responseData);
-        if (mounted) {
-          _showMessage("Signup successful!");
-          Navigator.pushReplacement(
-            context,
-            MaterialPageRoute(builder: (ctx) => const HomeScreen()),
-          );
-        }
+        if (!mounted) return;
+
+        _showMessage("Signup successful!");
+        await Navigator.pushReplacement(
+          context,
+          MaterialPageRoute(builder: (context) => const HomeScreen()),
+        );
       } else {
         _showMessage(responseData['detail'] ?? "Signup failed", isError: true);
       }
@@ -201,6 +137,7 @@ class _AuthScreenState extends State<AuthScreen> {
       _showMessage("Signup failed. Please try again.", isError: true);
     }
   }
+
   Future<void> _handleGoogleSignIn() async {
     try {
       setState(() => _isLoading = true);
@@ -230,17 +167,17 @@ class _AuthScreenState extends State<AuthScreen> {
       if (response.statusCode == 200) {
         final responseData = json.decode(response.body);
         await _saveUserData(responseData);
-        if (mounted) {
-          Navigator.pushReplacement(
-            context,
-            MaterialPageRoute(builder: (ctx) => const HomeScreen()),
-          );
-        }
+        if (!mounted) return;
+
+        await Navigator.pushReplacement(
+          context,
+          MaterialPageRoute(builder: (context) => const HomeScreen()),
+        );
       } else {
         _showMessage("Failed to authenticate with server", isError: true);
       }
     } catch (e) {
-      print('Google sign in error: $e');
+      debugPrint('Google sign in error: $e');
       _showMessage("Google sign in failed", isError: true);
     } finally {
       if (mounted) {
@@ -249,11 +186,22 @@ class _AuthScreenState extends State<AuthScreen> {
     }
   }
 
-  // Future<void> _saveUserData(Map<String, dynamic> userData) async {
-  //   final prefs = await SharedPreferences.getInstance();
-  //   await prefs.setString('user_data', json.encode(userData['user']));
-  //   await prefs.setString('access_token', userData['access_token']);
-  // }
+  Future<void> _saveUserData(Map<String, dynamic> data) async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+
+      if (data['access_token'] != null) {
+        await prefs.setString('access_token', data['access_token']);
+      }
+
+      if (data['user'] != null) {
+        await prefs.setString('user_data', json.encode(data['user']));
+      }
+    } catch (e) {
+      debugPrint('Error saving user data: $e');
+      throw Exception('Failed to save user data: $e');
+    }
+  }
 
   void _showMessage(String message, {bool isError = false}) {
     if (!mounted) return;
@@ -261,208 +209,235 @@ class _AuthScreenState extends State<AuthScreen> {
       SnackBar(
         content: Text(message),
         backgroundColor: isError ? Colors.red : Colors.green,
+        behavior: SnackBarBehavior.floating,
       ),
     );
+  }
+
+  String? _validateEmail(String? value) {
+    if (value == null || value.isEmpty) {
+      return 'Email is required';
+    }
+    if (!RegExp(r'^[\w-]+(\.[\w-]+)*@([\w-]+\.)+[a-zA-Z]{2,7}$').hasMatch(value)) {
+      return 'Please enter a valid email';
+    }
+    return null;
+  }
+
+  String? _validatePassword(String? value) {
+    if (value == null || value.isEmpty) {
+      return 'Password is required';
+    }
+    if (value.length < 6) {
+      return 'Password must be at least 6 characters';
+    }
+    return null;
+  }
+
+  String? _validateConfirmPassword(String? value) {
+    if (value != _passwordController.text) {
+      return 'Passwords do not match';
+    }
+    return null;
+  }
+
+  String? _validatePhone(String? value) {
+    if (value == null || value.isEmpty) {
+      return 'Phone number is required';
+    }
+    if (!RegExp(r'^\+?[\d-]{10,}$').hasMatch(value)) {
+      return 'Please enter a valid phone number';
+    }
+    return null;
   }
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(
-        title: Text(isLogin ? 'Login' : 'Sign Up'),
-      ),
-      body: _isLoading
-          ? const Center(child: CircularProgressIndicator())
-          : SingleChildScrollView(
-        padding: const EdgeInsets.all(16),
-        child: Form(
-          key: _formKey,
-          child: Column(
-            children: [
-              TextFormField(
-                controller: _emailController,
-                keyboardType: TextInputType.emailAddress,
-                decoration: const InputDecoration(
-                  labelText: 'Email',
-                  prefixIcon: Icon(Icons.email),
-                ),
-                validator: (value) {
-                  if (value == null || value.isEmpty) {
-                    return 'Please enter your email';
-                  }
-                  return null;
-                },
-              ),
-              const SizedBox(height: 16),
-
-              TextFormField(
-                controller: _passwordController,
-                obscureText: true,
-                decoration: const InputDecoration(
-                  labelText: 'Password',
-                  prefixIcon: Icon(Icons.lock),
-                ),
-                validator: (value) {
-                  if (value == null || value.isEmpty) {
-                    return 'Please enter your password';
-                  }
-                  return null;
-                },
-              ),
-              const SizedBox(height: 16),
-
-              if (!isLogin) ...[
-                TextFormField(
-                  controller: _confirmPasswordController,
-                  obscureText: true,
-                  decoration: const InputDecoration(
-                    labelText: 'Confirm Password',
-                    prefixIcon: Icon(Icons.lock_outline),
+      body: SafeArea(
+        child: Center(
+          child: SingleChildScrollView(
+            padding: const EdgeInsets.all(24),
+            child: Form(
+              key: _formKey,
+              child: Column(
+                mainAxisAlignment: MainAxisAlignment.center,
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  // Logo and Title
+                  Image.asset(
+                    'assets/images/go_ride_logo.png',
+                    height: 100,
+                    width: 100,
+                    errorBuilder: (context, error, stackTrace) {
+                      print('Error loading image: $error');
+                      return const Icon(
+                        Icons.car_rental,
+                        size: 100,
+                        color: Colors.deepPurple,
+                      );
+                    },
                   ),
-                  validator: (value) {
-                    if (value != _passwordController.text) {
-                      return 'Passwords do not match';
-                    }
-                    return null;
-                  },
-                ),
-                const SizedBox(height: 16),
 
-                TextFormField(
-                  controller: _nameController,
-                  decoration: const InputDecoration(
-                    labelText: 'Full Name',
-                    prefixIcon: Icon(Icons.person),
-                  ),
-                  validator: (value) {
-                    if (value == null || value.isEmpty) {
-                      return 'Please enter your name';
-                    }
-                    return null;
-                  },
-                ),
-                const SizedBox(height: 16),
-
-                TextFormField(
-                  controller: _phoneController,
-                  keyboardType: TextInputType.phone,
-                  decoration: const InputDecoration(
-                    labelText: 'Phone Number',
-                    prefixIcon: Icon(Icons.phone),
-                  ),
-                  validator: (value) {
-                    if (value == null || value.isEmpty) {
-                      return 'Please enter your phone number';
-                    }
-                    return null;
-                  },
-                ),
-                const SizedBox(height: 16),
-
-                GestureDetector(
-                  onTap: () async {
-                    final DateTime? picked = await showDatePicker(
-                      context: context,
-                      initialDate: DateTime.now().subtract(const Duration(days: 6570)),
-                      firstDate: DateTime(1900),
-                      lastDate: DateTime.now(),
-                    );
-                    if (picked != null) {
-                      setState(() {
-                        _selectedDate = picked;
-                      });
-                    }
-                  },
-                  child: Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 15),
-                    decoration: BoxDecoration(
-                      border: Border.all(color: Colors.grey.shade400),
-                      borderRadius: BorderRadius.circular(8),
+                  const SizedBox(height: 24),
+                  Text(
+                    isLogin ? 'Welcome Back!' : 'Create Account',
+                    style: Theme.of(context).textTheme.headlineSmall?.copyWith(
+                      fontWeight: FontWeight.bold,
                     ),
-                    child: Row(
-                      children: [
-                        const Icon(Icons.calendar_today, color: Colors.grey),
-                        const SizedBox(width: 12),
-                        Text(
-                          _selectedDate == null
-                              ? 'Select Date of Birth'
-                              : '${_selectedDate!.day}/${_selectedDate!.month}/${_selectedDate!.year}',
-                          style: TextStyle(
-                            color: _selectedDate == null ? Colors.grey : Colors.black,
+                    textAlign: TextAlign.center,
+                  ),
+                  const SizedBox(height: 32),
+
+                  // Form Fields
+                  CustomTextField(
+                    controller: _emailController,
+                    label: 'Email',
+                    prefixIcon: Icons.email,
+                    keyboardType: TextInputType.emailAddress,
+                    validator: _validateEmail,
+                  ),
+                  const SizedBox(height: 16),
+
+                  CustomTextField(
+                    controller: _passwordController,
+                    label: 'Password',
+                    prefixIcon: Icons.lock,
+                    obscureText: true,
+                    validator: _validatePassword,
+                  ),
+                  const SizedBox(height: 16),
+
+                  if (!isLogin) ...[
+                    CustomTextField(
+                      controller: _confirmPasswordController,
+                      label: 'Confirm Password',
+                      prefixIcon: Icons.lock_outline,
+                      obscureText: true,
+                      validator: _validateConfirmPassword,
+                    ),
+                    const SizedBox(height: 16),
+
+                    CustomTextField(
+                      controller: _nameController,
+                      label: 'Full Name',
+                      prefixIcon: Icons.person,
+                      validator: (value) =>
+                      value?.isEmpty ?? true ? 'Name is required' : null,
+                    ),
+                    const SizedBox(height: 16),
+
+                    CustomTextField(
+                      controller: _phoneController,
+                      label: 'Phone Number',
+                      prefixIcon: Icons.phone,
+                      keyboardType: TextInputType.phone,
+                      validator: _validatePhone,
+                    ),
+                    const SizedBox(height: 16),
+
+                    // Date Picker
+                    InkWell(
+                      onTap: () async {
+                        final DateTime? picked = await showDatePicker(
+                          context: context,
+                          initialDate:
+                          DateTime.now().subtract(const Duration(days: 6570)),
+                          firstDate: DateTime(1900),
+                          lastDate: DateTime.now(),
+                        );
+                        if (picked != null) {
+                          setState(() => _selectedDate = picked);
+                        }
+                      },
+                      child: InputDecorator(
+                        decoration: InputDecoration(
+                          labelText: 'Date of Birth',
+                          prefixIcon: const Icon(Icons.calendar_today),
+                          border: OutlineInputBorder(
+                            borderRadius: BorderRadius.circular(8),
                           ),
                         ),
+                        child: Text(
+                          _selectedDate == null
+                              ? 'Select Date'
+                              : '${_selectedDate!.day}/${_selectedDate!.month}/${_selectedDate!.year}',
+                        ),
+                      ),
+                    ),
+                    const SizedBox(height: 16),
+
+                    // User Type Selection
+                    DropdownButtonFormField<String>(
+                      value: _selectedUserType,
+                      decoration: const InputDecoration(
+                        labelText: 'Account Type',
+                        prefixIcon: Icon(Icons.person_outline),
+                      ),
+                      items: const [
+                        DropdownMenuItem(value: 'rider', child: Text('Rider')),
+                        DropdownMenuItem(value: 'driver', child: Text('Driver')),
                       ],
+                      onChanged: (value) {
+                        setState(() => _selectedUserType = value!);
+                      },
+                    ),
+                  ],
+
+                  const SizedBox(height: 24),
+
+                  // Submit Button
+                  CustomButton(
+                    text: isLogin ? 'Login' : 'Sign Up',
+                    onPressed: _handleSubmit,
+                    isLoading: _isLoading,
+                  ),
+                  const SizedBox(height: 16),
+
+                  // Toggle Auth Mode
+                  TextButton(
+                    onPressed: () {
+                      setState(() {
+                        isLogin = !isLogin;
+                        _formKey.currentState?.reset();
+                      });
+                    },
+                    child: Text(
+                      isLogin
+                          ? "Don't have an account? Sign up"
+                          : "Already have an account? Login",
                     ),
                   ),
-                ),
-                const SizedBox(height: 16),
 
-                DropdownButtonFormField<String>(
-                  value: _selectedUserType,
-                  decoration: const InputDecoration(
-                    labelText: 'User Type',
-                    prefixIcon: Icon(Icons.person_outline),
+                  const SizedBox(height: 24),
+                  const Row(
+                    children: [
+                      Expanded(child: Divider()),
+                      Padding(
+                        padding: EdgeInsets.symmetric(horizontal: 16),
+                        child: Text('OR'),
+                      ),
+                      Expanded(child: Divider()),
+                    ],
                   ),
-                  items: const [
-                    DropdownMenuItem(value: 'rider', child: Text('Rider')),
-                    DropdownMenuItem(value: 'driver', child: Text('Driver')),
-                  ],
-                  onChanged: (value) {
-                    setState(() {
-                      _selectedUserType = value!;
-                    });
-                  },
-                ),
-              ],
-              const SizedBox(height: 24),
+                  const SizedBox(height: 24),
 
-              ElevatedButton(
-                onPressed: _handleSubmit,
-                style: ElevatedButton.styleFrom(
-                  minimumSize: const Size(double.infinity, 50),
-                ),
-                child: Text(isLogin ? 'Login' : 'Sign Up'),
-              ),
-              const SizedBox(height: 16),
-
-              TextButton(
-                onPressed: () {
-                  setState(() {
-                    isLogin = !isLogin;
-                    _formKey.currentState?.reset();
-                  });
-                },
-                child: Text(
-                  isLogin
-                      ? "Don't have an account? Sign up"
-                      : "Already have an account? Login",
-                ),
-              ),
-              const SizedBox(height: 24),
-              const Row(
-                children: [
-                  Expanded(child: Divider()),
-                  Padding(
-                    padding: EdgeInsets.symmetric(horizontal: 16),
-                    child: Text('OR'),
+                  ElevatedButton.icon(
+                    icon: Image.asset(
+                      'assets/images/google_logo.png',
+                      height: 24,
+                      errorBuilder: (context, error, stackTrace) => const Icon(Icons.g_mobiledata),
+                    ),
+                    label: const Text('Sign in with Google'),
+                    onPressed: _handleGoogleSignIn,
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: Colors.white,
+                      foregroundColor: Colors.black87,
+                    ),
                   ),
-                  Expanded(child: Divider()),
                 ],
               ),
-              const SizedBox(height: 24),
-              OutlinedButton.icon(
-                onPressed: _handleGoogleSignIn,
-                icon: Image.asset(
-                  'assets/images/google_logo.png',
-                  height: 24,
-                ),
-                label: const Text('Sign in with Google'),
-                style: OutlinedButton.styleFrom(
-                  padding: const EdgeInsets.symmetric(vertical: 12),
-                  minimumSize: const Size(double.infinity, 48),
-                ),
-              ),
-            ],
+            ),
           ),
         ),
       ),

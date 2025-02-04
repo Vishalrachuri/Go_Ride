@@ -3,7 +3,9 @@ import 'package:flutter/material.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
-import 'package:car_pooling_app/utils/constants.dart';  // To this
+import '../widgets/custom_button.dart';
+import '../widgets/custom_text_field.dart';
+import '../utils/constants.dart';
 import 'auth_screen.dart';
 
 class AccountScreen extends StatefulWidget {
@@ -24,6 +26,7 @@ class _AccountScreenState extends State<AccountScreen> {
   final _currentPasswordController = TextEditingController();
   final _newPasswordController = TextEditingController();
   final _confirmPasswordController = TextEditingController();
+  final _emailController = TextEditingController();
 
   String? _selectedUserType;
   String? _accessToken;
@@ -42,6 +45,7 @@ class _AccountScreenState extends State<AccountScreen> {
     _currentPasswordController.dispose();
     _newPasswordController.dispose();
     _confirmPasswordController.dispose();
+    _emailController.dispose();
     super.dispose();
   }
 
@@ -51,38 +55,32 @@ class _AccountScreenState extends State<AccountScreen> {
     try {
       final prefs = await SharedPreferences.getInstance();
       _accessToken = prefs.getString('access_token');
+      final userDataString = prefs.getString('user_data');
 
-      if (_accessToken == null) {
+      if (_accessToken == null || userDataString == null) {
         _redirectToLogin();
         return;
       }
 
-      final response = await http.get(
-        Uri.parse('$baseUrl/user/profile'),
-        headers: {
-          'Authorization': 'Bearer $_accessToken',
-          'Content-Type': 'application/json',
-        },
-      );
+      final userData = json.decode(userDataString);
+      _populateUserData(userData);
 
-      if (response.statusCode == 200) {
-        final userData = json.decode(response.body)['user'];
-        setState(() {
-          _userData = userData;
-          _nameController.text = userData['name'] ?? '';
-          _phoneController.text = userData['phone_number'] ?? '';
-          _dateOfBirthController.text = userData['date_of_birth'] ?? '';
-          _selectedUserType = userData['user_type'];
-        });
-      } else {
-        _showMessage('Error loading user data', isError: true);
-      }
     } catch (e) {
-      print('Error loading user data: $e');
-      _showMessage('Failed to load user data', isError: true);
+      _showMessage('Error loading user data', isError: true);
+    } finally {
+      setState(() => _isLoading = false);
     }
+  }
 
-    setState(() => _isLoading = false);
+  void _populateUserData(Map<String, dynamic> userData) {
+    setState(() {
+      _userData = userData;
+      _nameController.text = userData['name'] ?? '';
+      _phoneController.text = userData['phone_number'] ?? '';
+      _dateOfBirthController.text = userData['date_of_birth'] ?? '';
+      _emailController.text = userData['email'] ?? '';
+      _selectedUserType = userData['user_type'];
+    });
   }
 
   Future<void> _updateProfile() async {
@@ -113,13 +111,13 @@ class _AccountScreenState extends State<AccountScreen> {
         _showMessage('Profile updated successfully');
         await _loadUserData();
       } else {
-        _showMessage('Failed to update profile', isError: true);
+        throw Exception('Failed to update profile');
       }
     } catch (e) {
       _showMessage('Error updating profile', isError: true);
+    } finally {
+      setState(() => _isLoading = false);
     }
-
-    setState(() => _isLoading = false);
   }
 
   Future<void> _changePassword() async {
@@ -148,25 +146,21 @@ class _AccountScreenState extends State<AccountScreen> {
         _currentPasswordController.clear();
         _newPasswordController.clear();
         _confirmPasswordController.clear();
-        Navigator.pop(context); // Close the dialog
+        Navigator.pop(context);
       } else {
-        _showMessage(
-          json.decode(response.body)['detail'] ?? 'Failed to change password',
-          isError: true,
-        );
+        throw Exception(json.decode(response.body)['detail'] ?? 'Failed to change password');
       }
     } catch (e) {
-      _showMessage('Error changing password', isError: true);
+      _showMessage(e.toString(), isError: true);
+    } finally {
+      setState(() => _isLoading = false);
     }
-
-    setState(() => _isLoading = false);
   }
 
   Future<void> _logout() async {
     setState(() => _isLoading = true);
 
     try {
-      // Call backend logout endpoint
       await http.delete(
         Uri.parse('$baseUrl/user/logout'),
         headers: {
@@ -175,16 +169,13 @@ class _AccountScreenState extends State<AccountScreen> {
         },
       );
 
-      // Clear local storage
       final prefs = await SharedPreferences.getInstance();
       await prefs.clear();
-
-      // Sign out from Firebase
       await FirebaseAuth.instance.signOut();
 
+      if (!mounted) return;
       _redirectToLogin();
     } catch (e) {
-      print('Logout error: $e');
       _showMessage('Error during logout', isError: true);
       setState(() => _isLoading = false);
     }
@@ -196,6 +187,19 @@ class _AccountScreenState extends State<AccountScreen> {
       initialDate: DateTime.now().subtract(const Duration(days: 6570)), // 18 years ago
       firstDate: DateTime(1900),
       lastDate: DateTime.now(),
+      builder: (context, child) {
+        return Theme(
+          data: Theme.of(context).copyWith(
+            colorScheme: ColorScheme.light(
+              primary: Theme.of(context).primaryColor,
+              onPrimary: Colors.white,
+              surface: Colors.white,
+              onSurface: Colors.black,
+            ),
+          ),
+          child: child!,
+        );
+      },
     );
 
     if (picked != null) {
@@ -214,31 +218,22 @@ class _AccountScreenState extends State<AccountScreen> {
         content: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            TextFormField(
+            CustomTextField(
               controller: _currentPasswordController,
+              label: 'Current Password',
               obscureText: true,
-              decoration: const InputDecoration(
-                labelText: 'Current Password',
-                border: OutlineInputBorder(),
-              ),
             ),
             const SizedBox(height: 16),
-            TextFormField(
+            CustomTextField(
               controller: _newPasswordController,
+              label: 'New Password',
               obscureText: true,
-              decoration: const InputDecoration(
-                labelText: 'New Password',
-                border: OutlineInputBorder(),
-              ),
             ),
             const SizedBox(height: 16),
-            TextFormField(
+            CustomTextField(
               controller: _confirmPasswordController,
+              label: 'Confirm New Password',
               obscureText: true,
-              decoration: const InputDecoration(
-                labelText: 'Confirm New Password',
-                border: OutlineInputBorder(),
-              ),
             ),
           ],
         ),
@@ -247,9 +242,10 @@ class _AccountScreenState extends State<AccountScreen> {
             onPressed: () => Navigator.pop(context),
             child: const Text('Cancel'),
           ),
-          ElevatedButton(
+          CustomButton(
+            text: 'Change Password',
             onPressed: _changePassword,
-            child: const Text('Change Password'),
+            isLoading: _isLoading,
           ),
         ],
       ),
@@ -257,7 +253,6 @@ class _AccountScreenState extends State<AccountScreen> {
   }
 
   void _redirectToLogin() {
-    if (!mounted) return;
     Navigator.pushAndRemoveUntil(
       context,
       MaterialPageRoute(builder: (context) => const AuthScreen()),
@@ -271,6 +266,7 @@ class _AccountScreenState extends State<AccountScreen> {
       SnackBar(
         content: Text(message),
         backgroundColor: isError ? Colors.red : Colors.green,
+        behavior: SnackBarBehavior.floating,
       ),
     );
   }
@@ -297,117 +293,175 @@ class _AccountScreenState extends State<AccountScreen> {
           ),
         ],
       ),
-      body: SingleChildScrollView(
-        padding: const EdgeInsets.all(16),
-        child: Form(
-          key: _formKey,
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Center(
-                child: Stack(
-                  children: [
-                    const CircleAvatar(
-                      radius: 50,
-                      backgroundColor: Colors.deepPurple,
-                      child: Icon(Icons.person, size: 50, color: Colors.white),
-                    ),
-                    Positioned(
-                      right: 0,
-                      bottom: 0,
-                      child: CircleAvatar(
-                        backgroundColor: Colors.white,
-                        radius: 18,
-                        child: IconButton(
-                          icon: const Icon(Icons.camera_alt, size: 18),
-                          onPressed: () {
-                            // Handle profile picture update
+      body: RefreshIndicator(
+        onRefresh: _loadUserData,
+        child: SingleChildScrollView(
+          physics: const AlwaysScrollableScrollPhysics(),
+          padding: const EdgeInsets.all(16),
+          child: Form(
+            key: _formKey,
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                // Profile Picture Section
+                Center(
+                  child: Stack(
+                    children: [
+                      CircleAvatar(
+                        radius: 50,
+                        backgroundColor: Theme.of(context).primaryColor,
+                        child: Text(
+                          _nameController.text.isNotEmpty ?
+                          _nameController.text[0].toUpperCase() :
+                          '?',
+                          style: const TextStyle(
+                            fontSize: 36,
+                            color: Colors.white,
+                            fontWeight: FontWeight.bold,
+                          ),
+                        ),
+                      ),
+                      Positioned(
+                        right: 0,
+                        bottom: 0,
+                        child: CircleAvatar(
+                          backgroundColor: Colors.white,
+                          radius: 18,
+                          child: IconButton(
+                            icon: const Icon(Icons.camera_alt, size: 18),
+                            onPressed: () {
+                              // TODO: Implement profile picture update
+                              _showMessage('Profile picture update coming soon');
+                            },
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                const SizedBox(height: 24),
+
+                Text(
+                  'Basic Information',
+                  style: Theme.of(context).textTheme.titleLarge?.copyWith(
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
+                const SizedBox(height: 16),
+
+                CustomTextField(
+                  controller: _emailController,
+                  label: 'Email',
+                  prefixIcon: Icons.email,
+                  enabled: false,
+                ),
+                const SizedBox(height: 16),
+
+                CustomTextField(
+                  controller: _nameController,
+                  label: 'Full Name',
+                  prefixIcon: Icons.person,
+                  validator: (value) =>
+                  value?.isEmpty ?? true ? 'Name is required' : null,
+                ),
+                const SizedBox(height: 16),
+
+                CustomTextField(
+                  controller: _phoneController,
+                  label: 'Phone Number',
+                  prefixIcon: Icons.phone,
+                  validator: (value) =>
+                  value?.isEmpty ?? true ? 'Phone number is required' : null,
+                ),
+                const SizedBox(height: 16),
+
+                CustomTextField(
+                  controller: _dateOfBirthController,
+                  label: 'Date of Birth',
+                  prefixIcon: Icons.calendar_today,
+                  readOnly: true,
+                  onTap: _selectDate,
+                ),
+                const SizedBox(height: 16),
+
+                DropdownButtonFormField<String>(
+                  value: _selectedUserType,
+                  decoration: const InputDecoration(
+                    labelText: 'Account Type',
+                    prefixIcon: Icon(Icons.person_outline),
+                  ),
+                  items: const [
+                    DropdownMenuItem(value: 'rider', child: Text('Rider')),
+                    DropdownMenuItem(value: 'driver', child: Text('Driver')),
+                  ],
+                  onChanged: (value) {
+                    setState(() => _selectedUserType = value);
+                  },
+                ),
+                const SizedBox(height: 24),
+
+                CustomButton(
+                  text: 'Save Changes',
+                  onPressed: _updateProfile,
+                  isLoading: _isLoading,
+                  icon: Icons.save,
+                  backgroundColor: Theme.of(context).primaryColor,
+                ),
+                const SizedBox(height: 16),
+
+                CustomButton(
+                  text: 'Change Password',
+                  onPressed: _showChangePasswordDialog,
+                  icon: Icons.lock_outline,
+                  isOutlined: true,
+                ),
+
+                const SizedBox(height: 24),
+                // Additional Account Settings Section
+                Text(
+                  'Preferences',
+                  style: Theme.of(context).textTheme.titleLarge?.copyWith(
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
+                const SizedBox(height: 16),
+
+                Card(
+                  child: Column(
+                    children: [
+                      ListTile(
+                        leading: const Icon(Icons.notifications),
+                        title: const Text('Push Notifications'),
+                        trailing: Switch(
+                          value: true, // TODO: Implement notification settings
+                          onChanged: (value) {
+                            _showMessage('Notification settings coming soon');
                           },
                         ),
                       ),
-                    ),
-                  ],
-                ),
-              ),
-              const SizedBox(height: 24),
-
-              Text(
-                'Basic Information',
-                style: Theme.of(context).textTheme.titleLarge,
-              ),
-              const SizedBox(height: 16),
-
-              TextFormField(
-                controller: _nameController,
-                decoration: const InputDecoration(
-                  labelText: 'Full Name',
-                  prefixIcon: Icon(Icons.person_outline),
-                ),
-                validator: (value) => value?.isEmpty ?? true ? 'Name is required' : null,
-              ),
-              const SizedBox(height: 16),
-
-              TextFormField(
-                controller: _phoneController,
-                decoration: const InputDecoration(
-                  labelText: 'Phone Number',
-                  prefixIcon: Icon(Icons.phone_outlined),
-                ),
-                validator: (value) => value?.isEmpty ?? true ? 'Phone number is required' : null,
-              ),
-              const SizedBox(height: 16),
-
-              GestureDetector(
-                onTap: _selectDate,
-                child: AbsorbPointer(
-                  child: TextFormField(
-                    controller: _dateOfBirthController,
-                    decoration: const InputDecoration(
-                      labelText: 'Date of Birth',
-                      prefixIcon: Icon(Icons.calendar_today),
-                    ),
+                      const Divider(height: 1),
+                      ListTile(
+                        leading: const Icon(Icons.language),
+                        title: const Text('Language'),
+                        trailing: const Icon(Icons.arrow_forward_ios, size: 16),
+                        onTap: () {
+                          _showMessage('Language settings coming soon');
+                        },
+                      ),
+                      const Divider(height: 1),
+                      ListTile(
+                        leading: const Icon(Icons.privacy_tip),
+                        title: const Text('Privacy Settings'),
+                        trailing: const Icon(Icons.arrow_forward_ios, size: 16),
+                        onTap: () {
+                          _showMessage('Privacy settings coming soon');
+                        },
+                      ),
+                    ],
                   ),
                 ),
-              ),
-              const SizedBox(height: 16),
-
-              DropdownButtonFormField<String>(
-                value: _selectedUserType,
-                decoration: const InputDecoration(
-                  labelText: 'Account Type',
-                  prefixIcon: Icon(Icons.person_outline),
-                ),
-                items: const [
-                  DropdownMenuItem(value: 'rider', child: Text('Rider')),
-                  DropdownMenuItem(value: 'driver', child: Text('Driver')),
-                ],
-                onChanged: (value) {
-                  setState(() {
-                    _selectedUserType = value;
-                  });
-                },
-              ),
-              const SizedBox(height: 24),
-
-              ElevatedButton.icon(
-                onPressed: _updateProfile,
-                icon: const Icon(Icons.save),
-                label: const Text('Save Changes'),
-                style: ElevatedButton.styleFrom(
-                  minimumSize: const Size(double.infinity, 48),
-                ),
-              ),
-              const SizedBox(height: 16),
-
-              OutlinedButton.icon(
-                onPressed: _showChangePasswordDialog,
-                icon: const Icon(Icons.lock_outline),
-                label: const Text('Change Password'),
-                style: OutlinedButton.styleFrom(
-                  minimumSize: const Size(double.infinity, 48),
-                ),
-              ),
-            ],
+              ],
+            ),
           ),
         ),
       ),
